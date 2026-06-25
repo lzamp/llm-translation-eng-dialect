@@ -5,19 +5,19 @@
       "bleu": 15.89,
       "chrf": 49.97,
       "n": 82,
-      "human_rating": null
+      "human_rating": 3.42
     },
     "llm_zeroshot": {
       "bleu": 16.43,
       "chrf": 49.74,
       "n": 82,
-      "human_rating": null
+      "human_rating": 3.61
     },
     "ablation_A0": {
       "bleu": 16.07,
       "chrf": 51.5,
       "n": 82,
-      "human_rating": null
+      "human_rating": 3.57
     },
     "ablation_A1": {
       "bleu": 16.15,
