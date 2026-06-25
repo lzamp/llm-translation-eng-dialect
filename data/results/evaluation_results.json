@@ -5,7 +5,7 @@
       "bleu": 15.89,
       "chrf": 49.97,
       "n": 82,
-      "human_rating": 3.42
+      "human_rating": 3.43
     },
     "llm_zeroshot": {
       "bleu": 16.43,

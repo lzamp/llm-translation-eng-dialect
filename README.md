@@ -114,13 +114,15 @@ The demo expects these files:
 
 The current aggregate test results are:
 
-| System | BLEU | chrF |
-|---|---:|---:|
-| NLLB zero-shot | 15.89 | 49.97 |
-| LLM zero-shot | 16.43 | 49.74 |
-| Fine-tuned NLLB | 16.07 | 51.50 |
+| System | BLEU | chrF | Human rating (1–5) |
+|---|---:|---:|---:|
+| NLLB zero-shot | 15.89 | 49.97 | 3.43 |
+| LLM zero-shot | 16.43 | 49.74 | 3.61 |
+| Fine-tuned NLLB | 16.07 | 51.50 | 3.57 |
 
-The fine-tuned NLLB model improves the original NLLB zero-shot baseline by 0.18 BLEU and 1.53 chrF points.
+Each of the 82 test outputs for the three principal systems has a saved manual `human_score` on a 1–5 scale. The `human_rating` values above are the corresponding means.
+
+Relative to NLLB zero-shot, the fine-tuned NLLB model improves by 0.18 BLEU, 1.53 chrF, and 0.14 human-rating points. The LLM zero-shot baseline obtains the highest BLEU and mean human rating, while the fine-tuned NLLB model obtains the highest chrF.
 
 Install the project dependencies, including Streamlit, with:
 
@@ -143,13 +145,13 @@ http://localhost:8501
 The demo displays:
 
 1. the train, development, and test split sizes
-2. aggregate BLEU and chrF scores for all three evaluated systems
-3. sentence-level comparisons against the Venetian reference
+2. aggregate BLEU, chrF, and mean human ratings for all three evaluated systems
+3. sentence-level comparisons against the Venetian reference, including each saved human score
 4. a fixed presentation example, the largest fine-tuning improvements and regressions, and all test examples
 5. an interactive text field for translating new English sentences into Venetian
 6. the main experimental takeaway
 
-The aggregate metrics and sentence-level comparisons use the saved prediction files. Free-text translation performs inference at runtime.
+The aggregate metrics, mean human ratings, and sentence-level comparisons use the saved prediction files. Free-text translation performs inference at runtime. The human ratings are descriptive summaries of the saved 1–5 scores.
 
 The public NLLB zero-shot model is downloaded automatically from Hugging Face when first used. To use the fine-tuned NLLB system, provide either:
 

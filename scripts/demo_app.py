@@ -2,8 +2,8 @@
 """Interactive demo for the English-to-Venetian translation project.
 
 Loads the current prediction and evaluation files, compares NLLB zero-shot,
-an LLM zero-shot baseline, and the fine-tuned NLLB model,
-and supports interactive English-to-Venetian translation.
+an LLM zero-shot baseline, and the fine-tuned NLLB model using automatic
+and human evaluation, and supports interactive English-to-Venetian translation.
 
 Run from the repository root with:
 
@@ -95,6 +95,7 @@ ALL_EXAMPLES_VIEW = "All test examples"
 # neutral example previously used in the presentation, now evaluated
 # with the current systems and test split.
 PRESENTATION_EXAMPLE_ID = "0737"
+HUMAN_RATING_COLUMN = "Human rating (1–5)"
 
 
 def count_jsonl(path: Path) -> int:
@@ -174,6 +175,11 @@ def build_comparisons(
             system_id: sentence_chrf(hypothesis, reference)
             for system_id, hypothesis in hypotheses.items()
         }
+        human_scores = {
+            BASELINE_SYSTEM_ID: baseline_record.get("human_score"),
+            LLM_SYSTEM_ID: llm_record.get("human_score"),
+            BEST_SYSTEM_ID: a0_record.get("human_score"),
+        }
 
         comparisons.append(
             {
@@ -182,6 +188,7 @@ def build_comparisons(
                 "reference": reference,
                 "hypotheses": hypotheses,
                 "scores": scores,
+                "human_scores": human_scores,
                 "models": {
                     BASELINE_SYSTEM_ID: baseline_record.get(
                         "model",
@@ -246,6 +253,7 @@ def build_metric_table(evaluation: dict) -> pd.DataFrame:
                 "System": spec["label"],
                 "BLEU": metrics.get("bleu"),
                 "chrF": metrics.get("chrf"),
+                HUMAN_RATING_COLUMN: metrics.get("human_rating"),
                 "Sentences": metrics.get("n"),
             }
         )
@@ -329,6 +337,11 @@ def render_metric_chart(
 ) -> None:
     """Render one metric with an explicit, stable system order."""
     chart_data = metric_table[["System", metric]].copy()
+    scale = (
+        {"domain": [0, 5]}
+        if metric == HUMAN_RATING_COLUMN
+        else {"zero": True}
+    )
     st.vega_lite_chart(
         chart_data,
         {
@@ -344,7 +357,7 @@ def render_metric_chart(
                     "field": metric,
                     "type": "quantitative",
                     "title": metric,
-                    "scale": {"zero": True},
+                    "scale": scale,
                 },
                 "tooltip": [
                     {
@@ -385,7 +398,7 @@ def metric_delta(
 
 
 def render_aggregate_results(evaluation: dict) -> None:
-    """Render corpus-level BLEU and chrF results."""
+    """Render corpus-level automatic and human evaluation results."""
     st.subheader("2. Aggregate test results")
     metric_table = build_metric_table(evaluation)
 
@@ -395,17 +408,25 @@ def render_aggregate_results(evaluation: dict) -> None:
         )
         return
 
-    table_col, bleu_col, chrf_col = st.columns([1.35, 1, 1])
-    with table_col:
-        st.dataframe(
-            metric_table,
-            hide_index=True,
-            width="stretch",
-        )
+    st.dataframe(
+        metric_table,
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "BLEU": st.column_config.NumberColumn(format="%.2f"),
+            "chrF": st.column_config.NumberColumn(format="%.2f"),
+            HUMAN_RATING_COLUMN: st.column_config.NumberColumn(format="%.2f"),
+            "Sentences": st.column_config.NumberColumn(format="%d"),
+        },
+    )
+
+    bleu_col, chrf_col, human_col = st.columns(3)
     with bleu_col:
         render_metric_chart(metric_table, "BLEU")
     with chrf_col:
         render_metric_chart(metric_table, "chrF")
+    with human_col:
+        render_metric_chart(metric_table, HUMAN_RATING_COLUMN)
 
     systems = evaluation.get("systems", {})
     a0_bleu_delta = metric_delta(
@@ -420,6 +441,12 @@ def render_aggregate_results(evaluation: dict) -> None:
         BASELINE_SYSTEM_ID,
         "chrf",
     )
+    a0_human_delta = metric_delta(
+        systems,
+        BEST_SYSTEM_ID,
+        BASELINE_SYSTEM_ID,
+        "human_rating",
+    )
     llm_bleu_delta = metric_delta(
         systems,
         LLM_SYSTEM_ID,
@@ -432,30 +459,33 @@ def render_aggregate_results(evaluation: dict) -> None:
         BASELINE_SYSTEM_ID,
         "chrf",
     )
+    llm_human_delta = metric_delta(
+        systems,
+        LLM_SYSTEM_ID,
+        BASELINE_SYSTEM_ID,
+        "human_rating",
+    )
 
-    delta_columns = st.columns(4)
-    delta_values = [
-        (
-            "Fine-tuned vs NLLB: BLEU",
-            a0_bleu_delta,
-        ),
-        (
-            "Fine-tuned vs NLLB: chrF",
-            a0_chrf_delta,
-        ),
-        (
-            "LLM vs NLLB: BLEU",
-            llm_bleu_delta,
-        ),
-        (
-            "LLM vs NLLB: chrF",
-            llm_chrf_delta,
-        ),
+    st.markdown("**Difference from NLLB zero-shot**")
+    a0_columns = st.columns(3)
+    a0_values = [
+        ("Fine-tuned: BLEU", a0_bleu_delta),
+        ("Fine-tuned: chrF", a0_chrf_delta),
+        ("Fine-tuned: Human rating", a0_human_delta),
     ]
-    for column, (label, value) in zip(
-        delta_columns,
-        delta_values,
-    ):
+    for column, (label, value) in zip(a0_columns, a0_values):
+        column.metric(
+            label,
+            "n/a" if value is None else f"{value:+.2f}",
+        )
+
+    llm_columns = st.columns(3)
+    llm_values = [
+        ("LLM: BLEU", llm_bleu_delta),
+        ("LLM: chrF", llm_chrf_delta),
+        ("LLM: Human rating", llm_human_delta),
+    ]
+    for column, (label, value) in zip(llm_columns, llm_values):
         column.metric(
             label,
             "n/a" if value is None else f"{value:+.2f}",
@@ -464,12 +494,15 @@ def render_aggregate_results(evaluation: dict) -> None:
     if (
         a0_bleu_delta is not None
         and a0_chrf_delta is not None
+        and a0_human_delta is not None
         and a0_bleu_delta > 0
         and a0_chrf_delta > 0
+        and a0_human_delta > 0
     ):
         st.success(
-            "The fine-tuned NLLB model improves both aggregate metrics over the NLLB "
-            "zero-shot baseline. The LLM baseline has the highest BLEU, "
+            "The fine-tuned NLLB model improves BLEU, chrF, and the mean "
+            "human rating over the NLLB zero-shot baseline. The LLM "
+            "zero-shot baseline has the highest BLEU and human rating, "
             "while the fine-tuned NLLB model has the highest chrF."
         )
 
@@ -479,7 +512,7 @@ def render_system_prediction(
     system_id: str,
     delta: float | None = None,
 ) -> None:
-    """Render one system prediction and its sentence-level chrF."""
+    """Render one prediction with sentence chrF and its human score."""
     st.markdown(f'**{SYSTEM_LABELS[system_id]}**')
     hypothesis = selected["hypotheses"][system_id]
 
@@ -488,15 +521,27 @@ def render_system_prediction(
     else:
         st.warning("No prediction was produced for this sentence.")
 
-    metric_kwargs = {
+    chrf_kwargs = {
         "label": "Sentence chrF",
         "value": f'{selected["scores"][system_id]:.2f}',
-        "help": "Exploratory sentence-level score.",
+        "help": "Exploratory sentence-level automatic score.",
     }
     if delta is not None:
-        metric_kwargs["delta"] = f"{delta:+.2f}"
+        chrf_kwargs["delta"] = f"{delta:+.2f}"
 
-    st.metric(**metric_kwargs)
+    human_score = selected["human_scores"].get(system_id)
+    metric_col, human_col = st.columns(2)
+    with metric_col:
+        st.metric(**chrf_kwargs)
+    with human_col:
+        st.metric(
+            "Human score (1–5)",
+            "n/a" if human_score is None else f"{float(human_score):.0f}",
+            help=(
+                "Human rating assigned to this translation on a 1–5 scale "
+                "in the saved evaluation data."
+            ),
+        )
 
 
 def render_example_comparison(
@@ -588,8 +633,11 @@ def render_example_comparison(
                 f'`{selected["models"][system_id]}`'
             )
         st.write(
-            "Sentence-level chrF is shown for exploration. "
-            "The main conclusion is based on corpus-level test metrics."
+            "Sentence-level chrF is shown for exploration, while the "
+            "human score is the saved manual rating for this translation "
+            "on a 1–5 scale. "
+            "The main conclusion is based on corpus-level automatic and "
+            "human evaluation."
         )
 
 
@@ -694,8 +742,14 @@ def load_translation_model(
     )
     model = AutoModelForSeq2SeqLM.from_pretrained(
         model_reference,
-        torch_dtype=dtype,
+        dtype=dtype,
     )
+
+    # Some saved checkpoints define a legacy generation max_length.
+    # Clear it so max_new_tokens is the only active output-length limit.
+    if getattr(model, "generation_config", None) is not None:
+        model.generation_config.max_length = None
+
     model.to(device)
     model.eval()
 
@@ -774,7 +828,8 @@ def render_free_text_translation() -> None:
     with st.expander("Translation model settings"):
         st.caption(
             "The zero-shot model is downloaded from Hugging Face "
-            "when first used. The fine-tuned system uses a local checkpoint "
+            "when first used. Set HF_TOKEN in the environment for authenticated "
+            "Hub downloads. The fine-tuned system uses a local checkpoint "
             "or a Hugging Face model ID."
         )
         fine_tuned_reference = st.text_input(
@@ -878,7 +933,7 @@ def main() -> None:
     st.caption(
         "A comparison of NLLB-200 zero-shot translation, "
         "an LLM zero-shot baseline, and the best fine-tuned "
-        "NLLB configuration."
+        "NLLB configuration using automatic metrics and human ratings on a 1–5 scale."
     )
 
     required_files = [
@@ -931,11 +986,28 @@ def main() -> None:
     render_free_text_translation()
 
     st.divider()
+    systems = evaluation.get("systems", {})
+    nllb_human = systems.get(BASELINE_SYSTEM_ID, {}).get("human_rating")
+    llm_human = systems.get(LLM_SYSTEM_ID, {}).get("human_rating")
+    fine_tuned_human = systems.get(BEST_SYSTEM_ID, {}).get("human_rating")
+
+    human_summary = ""
+    if all(
+        value is not None
+        for value in [nllb_human, llm_human, fine_tuned_human]
+    ):
+        human_summary = (
+            f" Mean human ratings are {float(nllb_human):.2f} for "
+            f"NLLB zero-shot, {float(llm_human):.2f} for LLM zero-shot, "
+            f"and {float(fine_tuned_human):.2f} for fine-tuned NLLB."
+        )
+
     st.markdown(
-        "**Takeaway:** the fine-tuned NLLB model improves the "
-        "NLLB zero-shot baseline on both aggregate metrics. "
-        "The LLM zero-shot baseline obtains the highest BLEU, "
-        "while the fine-tuned NLLB model obtains the highest chrF."
+        "**Takeaway:** the fine-tuned NLLB model improves BLEU, chrF, "
+        "and the mean human rating over the NLLB zero-shot baseline. "
+        "The LLM zero-shot baseline obtains the highest BLEU and human "
+        "rating, while the fine-tuned NLLB model obtains the highest chrF."
+        + human_summary
     )
 
 
