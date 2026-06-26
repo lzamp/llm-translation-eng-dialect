@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 from pathlib import Path
 
 import pandas as pd
@@ -723,6 +724,7 @@ def load_translation_model(
     AutoTokenizer,
     AutoModelForSeq2SeqLM,
     torch.device,
+    threading.Lock,
 ]:
     """Load and cache one translation model for interactive inference."""
     device = torch.device(
@@ -753,7 +755,12 @@ def load_translation_model(
     model.to(device)
     model.eval()
 
-    return tokenizer, model, device
+    # Streamlit may share cached resources across reruns or sessions.
+    # Serializing access prevents the fast tokenizer from being borrowed
+    # concurrently, which can otherwise raise `Already borrowed`.
+    inference_lock = threading.Lock()
+
+    return tokenizer, model, device, inference_lock
 
 
 @torch.inference_mode()
@@ -762,44 +769,46 @@ def translate_to_venetian(
     tokenizer: AutoTokenizer,
     model: AutoModelForSeq2SeqLM,
     device: torch.device,
+    inference_lock: threading.Lock,
 ) -> str:
     """Translate one English sentence into Venetian."""
-    tokenizer.src_lang = SOURCE_LANG
-    target_lang_id = tokenizer.convert_tokens_to_ids(
-        TARGET_LANG
-    )
-
-    if (
-        target_lang_id is None
-        or target_lang_id == tokenizer.unk_token_id
-    ):
-        raise ValueError(
-            f"The tokenizer does not recognize the target "
-            f"language code {TARGET_LANG!r}."
+    with inference_lock:
+        tokenizer.src_lang = SOURCE_LANG
+        target_lang_id = tokenizer.convert_tokens_to_ids(
+            TARGET_LANG
         )
 
-    encoded = tokenizer(
-        source_text,
-        return_tensors="pt",
-        truncation=True,
-        max_length=DEFAULT_MAX_INPUT_LENGTH,
-    )
-    encoded = {
-        name: tensor.to(device)
-        for name, tensor in encoded.items()
-    }
+        if (
+            target_lang_id is None
+            or target_lang_id == tokenizer.unk_token_id
+        ):
+            raise ValueError(
+                f"The tokenizer does not recognize the target "
+                f"language code {TARGET_LANG!r}."
+            )
 
-    generated = model.generate(
-        **encoded,
-        forced_bos_token_id=target_lang_id,
-        max_new_tokens=DEFAULT_MAX_NEW_TOKENS,
-        num_beams=4,
-        early_stopping=True,
-    )
-    return tokenizer.batch_decode(
-        generated,
-        skip_special_tokens=True,
-    )[0].strip()
+        encoded = tokenizer(
+            source_text,
+            return_tensors="pt",
+            truncation=True,
+            max_length=DEFAULT_MAX_INPUT_LENGTH,
+        )
+        encoded = {
+            name: tensor.to(device)
+            for name, tensor in encoded.items()
+        }
+
+        generated = model.generate(
+            **encoded,
+            forced_bos_token_id=target_lang_id,
+            max_new_tokens=DEFAULT_MAX_NEW_TOKENS,
+            num_beams=4,
+            early_stopping=True,
+        )
+        return tokenizer.batch_decode(
+            generated,
+            skip_special_tokens=True,
+        )[0].strip()
 
 
 def display_model_reference(model_reference: str) -> str:
@@ -888,7 +897,12 @@ def render_free_text_translation() -> None:
                 "Loading the model and translating. "
                 "The first run may take several minutes..."
             ):
-                tokenizer, model, device = load_translation_model(
+                (
+                    tokenizer,
+                    model,
+                    device,
+                    inference_lock,
+                ) = load_translation_model(
                     model_reference,
                     model_cache_token(model_reference),
                 )
@@ -897,6 +911,7 @@ def render_free_text_translation() -> None:
                     tokenizer,
                     model,
                     device,
+                    inference_lock,
                 )
         except Exception as exc:
             st.error(f"Translation failed: {exc}")
